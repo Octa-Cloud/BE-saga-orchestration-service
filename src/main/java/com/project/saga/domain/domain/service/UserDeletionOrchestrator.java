@@ -14,7 +14,7 @@ import java.time.Instant;
 /**
  * 유저 삭제 사가 오케스트레이터.
  *
- * - 시작 이벤트(user.deletion.start)를 받아 사가 레코드를 생성하고
+ * - 시작 이벤트(user.start-delete.command)를 받아 사가 레코드를 생성하고
  *   AUTH_REVOKE → SLEEP_DELETE 두 outbox 이벤트를 차례로 적재한다.
  * - 실제 브로커 전송은 OutboxPublisher 가 담당(Outbox 패턴).
  * - 동일 sagaId 반복 수신 시 멱등 처리로 무시한다.

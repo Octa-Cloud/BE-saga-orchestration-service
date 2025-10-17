@@ -25,10 +25,10 @@ public class OutboxPublisherTx {
             try {
                 // eventType → 카프카 토픽 매핑(변경 시 여기를 수정)
                 String topic = switch (e.getEventType()){
-                    case "AUTH_REVOKE"       -> "auth.token.revoke";
-                    case "SLEEP_DELETE"      -> "user.delete.command";
-                    case "SLEEP_COMPENSATE"  -> "user.delete.compensate";
-                    case "USER_FINAL_DELETE" -> "user.final.delete";
+                    case "AUTH_REVOKE"       -> "auth.token-delete.command";
+                    case "SLEEP_DELETE"      -> "sleep.user-delete.command";
+                    case "SLEEP_COMPENSATE"  -> "sleep.user-delete.compensate.command";
+                    case "USER_FINAL_DELETE" -> "user.final-delete.command";
                     default -> throw new IllegalArgumentException("unknown eventType=" + e.getEventType());
                 };
                 sender.sendSync(topic, e.getPartitionKey(), e.getPayload());

@@ -23,9 +23,9 @@ public class KafkaConfig {
         Map<String,Object> cfg = new HashMap<>(props.buildProducerProperties());
         cfg.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
         cfg.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
-        cfg.put(ProducerConfig.ACKS_CONFIG, "all");
-        cfg.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
-        cfg.put(ProducerConfig.MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION, 1);
+//        cfg.put(ProducerConfig.ACKS_CONFIG, "all");
+//        cfg.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
+//        cfg.put(ProducerConfig.MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION, 1);
         return new DefaultKafkaProducerFactory<>(cfg);
     }
     @Bean
@@ -38,7 +38,7 @@ public class KafkaConfig {
         Map<String,Object> cfg = new HashMap<>(props.buildConsumerProperties());
         cfg.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         cfg.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
-        cfg.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        cfg.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest"); // 클라우드
         cfg.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
         return new DefaultKafkaConsumerFactory<>(cfg);
     }
@@ -57,7 +57,7 @@ public class KafkaConfig {
         var f = new ConcurrentKafkaListenerContainerFactory<String,String>();
         f.setConsumerFactory(cf);
         f.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
-        f.setConcurrency(3);
+        //f.setConcurrency(3);
         return f;
     }
 

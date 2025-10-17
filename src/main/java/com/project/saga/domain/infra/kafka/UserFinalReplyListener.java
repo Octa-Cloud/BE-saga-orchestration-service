@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 유저 서비스의 최종 삭제 결과 회신(user.final.reply) 처리.
+ * 유저 서비스의 최종 삭제 결과 회신(user.final-delete.reply) 처리.
  *
  * - SUCCESS → userOk=true, (sleepOk도 true면) COMPLETED 로 사가 종료
  * - FAIL    → FAILED 로 표기(타임아웃 워처/운영 수동 개입 고려)
@@ -25,10 +25,10 @@ public class UserFinalReplyListener {
     private final UserDeletionSagaRepository sagaRepo;
 
     @RetryableTopic(
-            attempts="5", backoff=@Backoff(delay=1000, multiplier=2.0),
-            autoCreateTopics="true", dltTopicSuffix=".dlt"
+            attempts="3", backoff=@Backoff(delay=1000, multiplier=2.0),
+            autoCreateTopics="false", dltTopicSuffix=".dlt"
     )
-    @KafkaListener(topics="user.final.reply", groupId="orchestrator")
+    @KafkaListener(topics="user.final-delete.reply", groupId="orchestrator")
     @Transactional
     public void onUserFinalReply(String payload) throws Exception {
         var n = om.readTree(payload);
@@ -48,9 +48,5 @@ public class UserFinalReplyListener {
         }
     }
 
-    /** 최종 삭제 reply 의 DLT 모니터링(운영 파악용 로그) */
-    @KafkaListener(topics="user.final.reply.dlt", groupId="orchestrator")
-    public void onUserFinalReplyDlt(String payload){
-        log.error("[DLT][user.final.reply] {}", payload);
-    }
+
 }

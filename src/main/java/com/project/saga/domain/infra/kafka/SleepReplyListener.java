@@ -14,19 +14,21 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 슬립 서비스의 삭제/보상 결과 회신(user.delete.reply) 처리.
+ * 슬립 서비스의 삭제/보상 결과 회신(sleep.user-delete.reply) 처리.
  *
- * - SUCCESS/DELETE → sleepOk=true, 조건 충족 시 USER_FINAL_DELETE outbox 적재
- * - FAIL          → COMPENSATING 으로 전환하고 SLEEP_COMPENSATE outbox 적재
- * - SUCCESS/COMPENSATE → COMPENSATED 로 표기
+ * 규칙
+ * - SUCCESS / type=DELETE      → sleepOk=true, 조건 충족 시 USER_FINAL_DELETE 발행
+ * - SUCCESS / type=COMPENSATE  → COMPENSATED 로 표기(보상 성공)
+ * - FAIL    / type=DELETE      → (최초 1회) COMPENSATING 전환 + SLEEP_COMPENSATE 발행
+ * - FAIL    / type=COMPENSATE  → FAILED 로 종결(보상 자체가 실패 → 더 이상 진행 불가)
  *
- * 주의:
- * - 과거(시작 실패 등)로 인해 사가 레코드가 없을 수 있는데,
- *   현재 코드는 orElseThrow 로 DLT 로 보냄. 운영에서 reply-만 도착하는
- *   희귀 케이스를 “무해하게 스킵”하려면 Optional 가드로 바꾸는 것을 권장(TODO).
+ * 주의
+ * - 사가 레코드가 없으면 운영에서는 무해 스킵하는 편이 안전하지만,
+ *   현재는 orElseThrow 로 두어 데이터/플로우 문제를 조기에 드러내도록 함.
  */
 @Slf4j
-@Component @RequiredArgsConstructor
+@Component
+@RequiredArgsConstructor
 public class SleepReplyListener {
 
     private final ObjectMapper om;
@@ -34,66 +36,82 @@ public class SleepReplyListener {
     private final OutboxRepository outboxRepo;
 
     @RetryableTopic(
-            attempts = "5",
+            attempts = "3",
             backoff = @Backoff(delay = 1000, multiplier = 2.0),
-            autoCreateTopics = "true", dltTopicSuffix = ".dlt"
+            autoCreateTopics = "false",
+            dltTopicSuffix = ".dlt"
     )
-    @KafkaListener(topics = "user.delete.reply", groupId = "orchestrator")
+    @KafkaListener(topics = "sleep.user-delete.reply", groupId = "orchestrator")
     @Transactional
     public void onSleepReply(String payload) throws Exception {
         var n = om.readTree(payload);
-        String status = n.path("status").asText();                 // SUCCESS / FAIL ...
-        String type   = n.path("type").asText("DELETE").toUpperCase(); // DELETE / COMPENSATE
+        String status = n.path("status").asText();                    // SUCCESS | FAIL
+        String type   = n.path("type").asText("DELETE").toUpperCase();// DELETE | COMPENSATE
         String sagaId = n.path("eventId").asText();
         long userNo   = n.path("userNo").asLong();
 
-        var saga = sagaRepo.findBySagaId(sagaId).orElseThrow();    // TODO: Optional 가드로 변경 고려
+        var saga = sagaRepo.findBySagaId(sagaId).orElseThrow();
 
+        // ---- FAIL 경로 ----
         if (!"SUCCESS".equalsIgnoreCase(status)) {
-            // 실패 → 보상 트리거 (이미 COMPENSATING이면 중복 방지)
+            if ("COMPENSATE".equals(type)) {
+                // 보상도 실패 → 더 이상 할 게 없음. 사가를 FAILED 로 종결
+                saga.setStatus(UserDeletionSaga.SagaStatus.FAILED);
+                saga.touch();
+                log.warn("[orchestrator] sleep FAIL/COMPENSATE -> mark FAILED. sagaId={}, userNo={}", sagaId, userNo);
+                return;
+            }
+
+            // DELETE 실패: 최초 1회만 보상 트리거
             if (saga.getStatus() != UserDeletionSaga.SagaStatus.COMPENSATING) {
                 saga.setStatus(UserDeletionSaga.SagaStatus.COMPENSATING);
                 saga.touch();
-                outboxRepo.save(OutboxEvent.of(
-                        sagaId, "User", userNo, "SLEEP_COMPENSATE",
-                        om.writeValueAsString(om.createObjectNode()
-                                .put("eventId", sagaId).put("userNo", userNo)),
-                        String.valueOf(userNo)
-                ));
+                if (!outboxRepo.existsByEventIdAndEventType(sagaId, "SLEEP_COMPENSATE")) {
+                    outboxRepo.save(OutboxEvent.of(
+                            sagaId, "User", userNo, "SLEEP_COMPENSATE",
+                            om.writeValueAsString(om.createObjectNode()
+                                    .put("eventId", sagaId).put("userNo", userNo)),
+                            String.valueOf(userNo)
+                    ));
+                }
+                log.warn("[orchestrator] sleep FAIL/DELETE -> trigger COMPENSATE. sagaId={}, userNo={}", sagaId, userNo);
             }
             return;
         }
 
+        // ---- SUCCESS 경로 ----
         if ("COMPENSATE".equals(type)) {
-            // 보상 성공 마킹
+            // 보상 성공
             saga.setStatus(UserDeletionSaga.SagaStatus.COMPENSATED);
             saga.touch();
+            log.info("[orchestrator] sleep SUCCESS/COMPENSATE -> COMPENSATED. sagaId={}, userNo={}", sagaId, userNo);
             return;
         }
 
-        if (!"DELETE".equals(type)) return; // 관심 없는 타입은 무시
+        if (!"DELETE".equals(type)) {
+            // 우리가 관심 없는 타입이면 무해 스킵
+            log.debug("[orchestrator] ignore sleep reply type={}, sagaId={}", type, sagaId);
+            return;
+        }
 
-        // 슬립 삭제 성공(멱등 보정)
+        // DELETE 성공: 멱등 보정
         if (!saga.isSleepOk()) {
             saga.setSleepOk(true);
             saga.touch();
         }
 
-        // 모든 선행조건 충족 시 유저 최종 삭제 커맨드 발행(중복 방지 체크)
+        // 토큰/슬립 완료 & 아직 유저 최종 미발행이면 USER_FINAL_DELETE 커맨드 발행
         if (saga.isTokenOk() && saga.isSleepOk() && !saga.isUserOk()
                 && !outboxRepo.existsByEventIdAndEventType(sagaId, "USER_FINAL_DELETE")) {
+
             outboxRepo.save(OutboxEvent.of(
                     sagaId, "User", userNo, "USER_FINAL_DELETE",
                     om.writeValueAsString(om.createObjectNode()
                             .put("eventId", sagaId).put("userNo", userNo)),
                     String.valueOf(userNo)
             ));
+            log.info("[orchestrator] emit USER_FINAL_DELETE. sagaId={}, userNo={}", sagaId, userNo);
         }
     }
 
-    /** reply 의 DLT 모니터링(운영 파악용 로그) */
-    @KafkaListener(topics="user.delete.reply.dlt", groupId="orchestrator")
-    public void onSleepReplyDlt(String payload){
-        log.error("[DLT][sleep.reply] {}", payload);
-    }
 }

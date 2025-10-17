@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * user.deletion.start 컨슈머.
+ * user.start-delete.command 컨슈머.
  *
  * - API(유저 서비스)에서 발행한 사가 시작 이벤트를 수신하여 오케스트레이션을 트리거.
  * - 파싱 실패/DB 제약 등 예외는 @RetryableTopic 으로 재시도→DLT 로 안전하게 흘린다.
@@ -28,12 +28,12 @@ public class DeletionStartListener {
     private final UserDeletionOrchestrator orchestrator;
 
     @RetryableTopic(
-            attempts = "5",
+            attempts = "3",
             backoff = @Backoff(delay = 1000, multiplier = 2.0), // 1s→2s→4s→8s→16s
-            autoCreateTopics = "true",
+            autoCreateTopics = "false",
             dltTopicSuffix = ".dlt"
     )
-    @KafkaListener(topics = "user.deletion.start", groupId = "orchestrator")
+    @KafkaListener(topics = "user.start-delete.command", groupId = "orchestrator")
     @Transactional
     public void onStart(
             @Header(name = KafkaHeaders.RECEIVED_KEY, required = false) String key,
@@ -56,7 +56,7 @@ public class DeletionStartListener {
     }
 
     /** 시작 이벤트의 DLT 모니터링(운영 파악용 로그) */
-    @KafkaListener(topics = "user.deletion.start.dlt", groupId = "orchestrator")
+    @KafkaListener(topics = "user.start-delete.command.dlt", groupId = "orchestrator")
     public void onStartDlt(
             @Payload String payload,
             @Header(name = KafkaHeaders.RECEIVED_KEY, required = false) String key,
@@ -73,7 +73,7 @@ public class DeletionStartListener {
         String fqcn = exFqcn != null ? exFqcn : exFqcnRaw;
         String stack = exStack != null ? exStack : exStackRaw;
 
-        log.error("[DLT][user.deletion.start] key={}, exFqcn={}, exMsg={}\npayload={}\nstack={}",
+        log.error("[DLT][user.start-delete.command] key={}, exFqcn={}, exMsg={}\npayload={}\nstack={}",
                 key, fqcn, msg, payload, stack);
     }
 }
