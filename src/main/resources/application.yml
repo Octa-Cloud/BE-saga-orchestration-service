@@ -1,7 +1,51 @@
 server:
   port: 8080
 
+resilience4j:
+  retry:
+    instances:
+      kafkaSend:
+        max-attempts: 3
+        wait-duration: 200ms
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        retry-exceptions:
+          - org.apache.kafka.common.errors.TimeoutException
+          - org.apache.kafka.common.errors.RetriableException
+  circuitbreaker:
+    instances:
+      kafkaSend:
+        sliding-window-type: count_based
+        sliding-window-size: 20
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+
 spring:
+  kafka:
+    bootstrap-servers: pkc-gq2xn.asia-northeast3.gcp.confluent.cloud:9092
+    properties:
+      security.protocol: SASL_SSL
+      sasl.mechanism: PLAIN
+      sasl.jaas.config: >
+        org.apache.kafka.common.security.plain.PlainLoginModule required
+        username="AGQDVMNB6DVPXFX7"
+        password="cfltBaumbQnzwuPIRS3E8S1MNrfqrsb9LXzDvUBPBrP0YQRUTfBqdD2nOKmzUXFw";
+    producer:
+      acks: all
+      retries: 3
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    consumer:
+      enable-auto-commit: false
+      auto-offset-reset: latest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    admin:
+      auto-create: false
+      fail-fast: true
+
   datasource:
     username: ${RDB_USERNAME}
     url: ${RDB_URL}
@@ -20,7 +64,7 @@ logging:
     org.springframework: DEBUG
     org.springframework.web: DEBUG
     org.springframework.boot: DEBUG
-    com.project.user: DEBUG
+    com.project.saga: DEBUG
     org.hibernate.SQL: DEBUG
     org.hibernate.type.descriptor.sql: TRACE
 
@@ -38,7 +82,7 @@ management:
       enabled: true
   metrics:
     tags:
-      application: user-service
+      application: orchestrator-service
     distribution:
       percentiles-histogram:
         http.server.requests: true

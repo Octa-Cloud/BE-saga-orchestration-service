@@ -27,6 +27,11 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     implementation 'io.micrometer:micrometer-registry-prometheus'
 
+    //resilience4j
+    implementation platform("io.github.resilience4j:resilience4j-bom:2.2.0") // 버전 한줄로 관리
+    implementation "io.github.resilience4j:resilience4j-spring-boot3"       // ★ 필수 (Registry/AutoConfig)
+    implementation "org.springframework.boot:spring-boot-starter-aop"   // 필수
+
     // Kafka
     implementation 'org.springframework.kafka:spring-kafka'
 
