@@ -1,0 +1,92 @@
+name: Saga-Orchestration-Service Image Build
+
+env:
+    SERVICE_NAME: saga-service
+    BUILD_ID: ${{ github.sha }}-${{ github.run_id }}
+    HELM_VALUE: saga-orchestration-service/values.yaml
+    HELM_BRANCH: main
+    INFRA_REPO: ${{ secrets.INFRA_REPO }}
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      # Gradle 빌드
+      - name: Build with Gradle
+        run: ./gradlew clean build -x test
+
+      # Docker 로그인
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PAT }}
+
+      # 태그명 변수화 + 짧게 만들기
+      - name: Set Image Version Tag
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      # Docker Image 빌드 및 푸시
+      - name: Build and push image to Docker Hub
+        env:
+          IMAGE_TAG: docker.io/${{ secrets.DOCKER_USERNAME }}/${{ env.SERVICE_NAME }}:${{ env.BUILD_ID }}
+        run: |
+          docker build -f ./Dockerfile -t "$IMAGE_TAG" .
+          docker push "$IMAGE_TAG"
+
+      # ArgoCD가 참조하는 Repository로 checkout
+      - name: Checkout Helm Repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.INFRA_REPO }}
+          path: helm-chart
+          ref: ${{ env.HELM_BRANCH }}
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Change Image tag of the Helm Chart
+        uses: mikefarah/yq@v4.34.1
+        with:
+          cmd: yq -i '.image.tag = "${{ env.BUILD_ID }}"' helm-chart/${{ env.HELM_VALUE }}
+
+      - name: Commit and Push Helm Chart Changes
+        run: |
+          cd helm-chart
+          git config --local user.email "githubaction@gmail.com"
+          git config --local user.name "githubaction"
+          git add ${{ env.HELM_VALUE }}
+          git commit -m "Update ${SERVICE_NAME} image tag to ${{ env.BUILD_ID }}" || echo "No changes to commit"
+          
+          # Push with retry logic
+          attempts=0
+          max_attempts=3
+          
+          while [ $attempts -lt $max_attempts ]; do
+            if git push origin ${{ env.HELM_BRANCH }}; then
+              echo "Push successful!"
+              break
+            else
+              echo "Push failed. Attempting rebase with remote branch."
+              git pull --rebase origin ${{ env.HELM_BRANCH }}
+              attempts=$((attempts+1))
+              if [ $attempts -eq $max_attempts ]; then
+                echo "Push failed after $max_attempts attempts"
+                exit 1
+              fi
+              echo "Retrying push..."
+            fi
+          done
