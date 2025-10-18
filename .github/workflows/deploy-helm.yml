@@ -1,7 +1,7 @@
 name: Saga-Orchestration-Service Image Build
 
 env:
-    SERVICE_NAME: saga-service
+    SERVICE_NAME: saga-orchestration-service
     BUILD_ID: ${{ github.sha }}-${{ github.run_id }}
     HELM_VALUE: saga-orchestration-service/values.yaml
     HELM_BRANCH: main
